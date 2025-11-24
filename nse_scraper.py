@@ -242,9 +242,10 @@ class NSEFinancialDownloader:
             print(f"✅ Pressed Enter...", end=" ")
             time.sleep(4)  # Wait for page/results to load
             
-            # Step 1: Find and CLICK the first/top result row
+            # Step 1: Find the consolidated version row (prefer consolidated over standalone)
             try:
                 first_row = None
+                consolidated_row = None
                 rows = self.driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
                 
                 for row in rows:
@@ -255,10 +256,18 @@ class NSEFinancialDownloader:
                             # Check if this row has actual company data
                             first_cell_text = cells[0].text.strip()
                             if first_cell_text:  # Not empty
-                                first_row = row
-                                break
+                                # Check if this is a consolidated version
+                                row_text = row.text.lower()
+                                if 'consolidated' in row_text:
+                                    consolidated_row = row
+                                    break
+                                elif not first_row:
+                                    first_row = row
                 
-                if not first_row:
+                # Prefer consolidated, fallback to first result
+                selected_row = consolidated_row if consolidated_row else first_row
+                
+                if not selected_row:
                     print("❌ No results found")
                     # Clear search box for next attempt
                     search_box.clear()
@@ -270,8 +279,8 @@ class NSEFinancialDownloader:
                         'file_type': 'N/A'
                     }
                 
-                # Click on the first row to open details/expand
-                print(f"👆 Clicking top result...", end=" ")
+                # Click on the selected row to open details/expand
+                print(f"👆 Clicking {'consolidated' if consolidated_row else 'top'} result...", end=" ")
                 time.sleep(0.5)
                 
                 # Try clicking the company name link in first cell
@@ -285,29 +294,19 @@ class NSEFinancialDownloader:
                 # time.sleep(3)  # Wait for row to expand or page to load
                 # print(f"✅ Opened...", end=" ")
                 
-                # Step 2: Now find and click the XBRL icon/download link
+                # Step 2: Now find and click the XBRL icon/download link from the selected row
                 xbrl_link = None
                 
-                # Method 1: Look for XBRL icon in the expanded/clicked row
+                # Method 1: Look for XBRL icon in the selected row
                 try:
-                    xbrl_link = first_row.find_element(By.XPATH, ".//a[.//img]")
+                    xbrl_link = selected_row.find_element(By.XPATH, ".//a[.//img]")
                 except:
                     pass
                 
-                # Method 2: Look anywhere on page for XBRL download after clicking
+                # Method 2: Look for link with document/download icon in the selected row
                 if not xbrl_link:
                     try:
-                        # Look for XBRL links that appeared after clicking
-                        xbrl_links = self.driver.find_elements(By.XPATH, "//a[contains(@href, 'XBRL') or contains(@href, '.zip') or .//img[contains(@alt, 'XBRL')]]")
-                        if xbrl_links:
-                            xbrl_link = xbrl_links[0]
-                    except:
-                        pass
-                
-                # Method 3: Look for link with document/download icon
-                if not xbrl_link:
-                    try:
-                        all_links_in_row = first_row.find_elements(By.TAG_NAME, "a")
+                        all_links_in_row = selected_row.find_elements(By.TAG_NAME, "a")
                         for link in all_links_in_row:
                             # Check if link has an image (icon)
                             imgs = link.find_elements(By.TAG_NAME, "img")
