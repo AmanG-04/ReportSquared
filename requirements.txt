@@ -1,3 +1,7 @@
 Flask==2.3.3
 requests==2.31.0
 Werkzeug==2.3.7
+pandas==2.2.2
+openpyxl==3.1.5
+pymongo==4.8.0
+python-dotenv==1.0.1

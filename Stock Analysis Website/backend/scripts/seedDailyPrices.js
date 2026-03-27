@@ -33,7 +33,7 @@ if (!MONGODB_URI) {
 
 const DATA_FILE = path.resolve(__dirname, '../nifty100.json');
 const PRICE_COLLECTION = 'daily_prices';
-const RANGE = '1y';
+const RANGE = '5y';
 const INTERVAL = '1d';
 const REQUEST_SLEEP_MS = 750;
 

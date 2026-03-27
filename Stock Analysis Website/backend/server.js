@@ -64,30 +64,103 @@ async function getStockPrice(symbol) {
 
 // MongoDB Configuration
 const MONGODB_USERNAME = process.env.MONGODB_USERNAME;
-const MONGODB_PASSWORD = encodeURIComponent(process.env.MONGODB_PASSWORD);
+const MONGODB_PASSWORD = process.env.MONGODB_PASSWORD
+  ? encodeURIComponent(process.env.MONGODB_PASSWORD)
+  : '';
 const MONGODB_CLUSTER = process.env.MONGODB_CLUSTER;
 const MONGODB_DATABASE = process.env.MONGODB_DATABASE || 'financial_data';
 const MONGODB_COLLECTION = process.env.MONGODB_COLLECTION || 'quarterly_results';
+const MONGODB_URI_ENV = process.env.MONGODB_URI;
+const MONGODB_ATLAS_URI = process.env.MONGODB_ATLAS_URI;
+const MONGODB_LOCAL_URI = process.env.MONGODB_LOCAL_URI || 'mongodb://localhost:27017';
 
-const MONGODB_URI = `mongodb+srv://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@${MONGODB_CLUSTER}/?appName=Cluster0`;
+function buildAtlasUri() {
+  if (MONGODB_ATLAS_URI) {
+    return MONGODB_ATLAS_URI;
+  }
+
+  if (MONGODB_URI_ENV && MONGODB_URI_ENV.startsWith('mongodb+srv://')) {
+    return MONGODB_URI_ENV;
+  }
+
+  if (!MONGODB_CLUSTER) {
+    return null;
+  }
+
+  const isMongoScheme = MONGODB_CLUSTER.startsWith('mongodb://') || MONGODB_CLUSTER.startsWith('mongodb+srv://');
+  if (isMongoScheme) {
+    return MONGODB_CLUSTER.startsWith('mongodb+srv://') ? MONGODB_CLUSTER : null;
+  }
+
+  const isLocalHost = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(MONGODB_CLUSTER);
+  if (isLocalHost) {
+    return null;
+  }
+
+  if (!MONGODB_USERNAME || !MONGODB_PASSWORD) {
+    return null;
+  }
+
+  return `mongodb+srv://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@${MONGODB_CLUSTER}/?appName=Cluster0`;
+}
+
+function buildLocalUri() {
+  if (MONGODB_LOCAL_URI) {
+    return MONGODB_LOCAL_URI;
+  }
+
+  if (MONGODB_URI_ENV && MONGODB_URI_ENV.startsWith('mongodb://')) {
+    return MONGODB_URI_ENV;
+  }
+
+  return 'mongodb://localhost:27017';
+}
 
 let db;
 let collection;
 
 // Connect to MongoDB
 async function connectToMongoDB() {
-  try {
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
-    console.log('✓ Connected to MongoDB Atlas');
-    
-    db = client.db(MONGODB_DATABASE);
-    collection = db.collection(MONGODB_COLLECTION);
-    console.log(`✓ Using database: ${MONGODB_DATABASE}, collection: ${MONGODB_COLLECTION}`);
-  } catch (error) {
-    console.error('✗ Failed to connect to MongoDB:', error);
+  const atlasUri = buildAtlasUri();
+  const localUri = buildLocalUri();
+  const connectionCandidates = [];
+
+  if (atlasUri) {
+    connectionCandidates.push({ label: 'Atlas', uri: atlasUri });
+  }
+  if (localUri) {
+    connectionCandidates.push({ label: 'Local', uri: localUri });
+  }
+
+  if (connectionCandidates.length === 0) {
+    console.error('✗ Failed to connect to MongoDB: no valid URI configured');
     process.exit(1);
   }
+
+  let lastError;
+
+  for (const candidate of connectionCandidates) {
+    try {
+      const client = new MongoClient(candidate.uri, { serverSelectionTimeoutMS: 5000 });
+      await client.connect();
+      db = client.db(MONGODB_DATABASE);
+      collection = db.collection(MONGODB_COLLECTION);
+      console.log(`✓ Connected to MongoDB (${candidate.label})`);
+      console.log(`✓ Using database: ${MONGODB_DATABASE}, collection: ${MONGODB_COLLECTION}`);
+
+      if (candidate.label === 'Local' && atlasUri) {
+        console.log('ℹ Atlas unavailable, using local MongoDB fallback');
+      }
+
+      return;
+    } catch (error) {
+      lastError = error;
+      console.warn(`⚠ MongoDB ${candidate.label} connection failed: ${error.message}`);
+    }
+  }
+
+  console.error('✗ Failed to connect to MongoDB with all configured targets:', lastError);
+  process.exit(1);
 }
 
 // Helper function to transform MongoDB data to frontend format

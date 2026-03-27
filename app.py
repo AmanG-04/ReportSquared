@@ -1,8 +1,11 @@
 from flask import Flask, render_template, request, jsonify, send_file
 import os
+import json
 import requests
 import threading
 import time
+import hashlib
+from pymongo import MongoClient
 from datetime import datetime
 
 app = Flask(__name__)
@@ -77,6 +80,53 @@ NIFTY50 = [
     {'symbol': 'SHRIRAMFIN', 'name': 'Shriram Finance Ltd.'}
 ]
 
+# Try to load a NIFTY100 list (optional). If present, use it as the companies list.
+# Path relative to this file: 'Stock Analysis Website/backend/nifty100.json'
+NIFTY100 = None
+try:
+    nifty100_path = os.path.join(os.path.dirname(__file__), 'Stock Analysis Website', 'backend', 'nifty100.json')
+    if os.path.exists(nifty100_path):
+        with open(nifty100_path, 'r', encoding='utf-8') as f:
+            raw = json.load(f)
+            # Normalize entries to match NIFTY50 shape: {'symbol','name',...}
+            normalized = []
+            for i, item in enumerate(raw):
+                if not isinstance(item, dict):
+                    continue
+                sym = item.get('symbol') or item.get('Symbol')
+                # Many files use 'company' as the name key; normalize to 'name'
+                name = item.get('name') or item.get('company') or item.get('Company')
+                if not sym or not name:
+                    continue
+                normalized.append({'symbol': str(sym), 'name': str(name), **{k: v for k, v in item.items() if k not in ('symbol','Symbol','name','company','Company')}})
+            NIFTY100 = normalized
+            print(f"Loaded {len(NIFTY100)} valid companies from {nifty100_path}")
+    else:
+        print(f"nifty100.json not found at {nifty100_path}; using built-in NIFTY50 list")
+except Exception as e:
+    print(f"Warning: failed to load nifty100.json: {e}")
+    NIFTY100 = None
+
+# Choose which list the app will use
+COMPANIES =  NIFTY100 if NIFTY100 else NIFTY50
+
+# --- Optional MongoDB metadata store for downloaded XBRL files ---
+MONGO_URI = os.environ.get('MONGODB_URI') or os.environ.get('MONGODB_URI_LOCAL') or 'mongodb://127.0.0.1:27017/report_squared'
+mongo_client = None
+db = None
+xbrl_col = None
+try:
+    mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    mongo_client.admin.command('ping')
+    db = mongo_client.get_default_database() or mongo_client['report_squared']
+    xbrl_col = db['xbrl_files']
+    xbrl_col.create_index([('symbol', 1), ('qe', 1), ('tag', 1)], unique=True)
+    print(f"Connected to MongoDB at {MONGO_URI}")
+except Exception as e:
+    mongo_client = None
+    xbrl_col = None
+    print(f"Warning: MongoDB not available at {MONGO_URI}: {e}")
+
 def g_res(sym, iss, ped):
     """Get results from NSE API - automatically chooses the right API based on date"""
     s = requests.Session()
@@ -149,6 +199,7 @@ def dl_all(sym, iss, ped, filing_type='both'):
         target_date_upper = ped.upper()
         
         files_downloaded = []
+        skipped_files = []
         matching_items = []
         os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
         
@@ -221,13 +272,64 @@ def dl_all(sym, iss, ped, filing_type='both'):
             qe = (api_to_date or "").replace(" ", "_")
             nm = f"{sym}_{qe}_{tag}.xml"
             pth = os.path.join(app.config['UPLOAD_FOLDER'], nm)
+            # Skip download if file already exists — record metadata in MongoDB if available
+            if os.path.exists(pth):
+                try:
+                    with open(pth, 'rb') as _fh:
+                        existing_bytes = _fh.read()
+                    sha = hashlib.sha256(existing_bytes).hexdigest()
+                    size = len(existing_bytes)
+                    if xbrl_col:
+                        meta = {
+                            'symbol': sym,
+                            'qe': api_to_date,
+                            'tag': tag,
+                            'filename': nm,
+                            'filepath': pth,
+                            'status': 'exists',
+                            'size': size,
+                            'sha256': sha,
+                            'last_checked': datetime.utcnow()
+                        }
+                        xbrl_col.update_one({'symbol': sym, 'qe': api_to_date, 'tag': tag}, {'$set': meta}, upsert=True)
+                except Exception as _e:
+                    print(f"  ! warning computing checksum for existing file {nm}: {_e}")
+                skipped_files.append(nm)
+                print(f"  → Skipping existing file: {nm}")
+                continue
             with open(pth, "wb") as f:
                 f.write(z.content)
             files_downloaded.append(nm)
             print(f"  ✓ Saved: {nm}")
+            # Save metadata to MongoDB if available
+            try:
+                sha = hashlib.sha256(z.content).hexdigest()
+                size = len(z.content)
+                if xbrl_col:
+                    meta = {
+                        'symbol': sym,
+                        'qe': api_to_date,
+                        'tag': tag,
+                        'filename': nm,
+                        'filepath': pth,
+                        'status': 'downloaded',
+                        'size': size,
+                        'sha256': sha,
+                        'source_url': x,
+                        'downloaded_at': datetime.utcnow()
+                    }
+                    xbrl_col.update_one({'symbol': sym, 'qe': api_to_date, 'tag': tag}, {'$set': meta}, upsert=True)
+            except Exception as _e:
+                print(f"  ! warning saving metadata for {nm}: {_e}")
         
-        if files_downloaded:
-            return {'success': True, 'message': f'Downloaded {len(files_downloaded)} file(s)', 'files': files_downloaded}
+        # Build response that includes skipped files so caller can act accordingly
+        if files_downloaded or skipped_files:
+            msg_parts = []
+            if files_downloaded:
+                msg_parts.append(f'Downloaded {len(files_downloaded)} file(s)')
+            if skipped_files:
+                msg_parts.append(f'Skipped {len(skipped_files)} existing file(s)')
+            return {'success': True, 'message': '; '.join(msg_parts), 'files': files_downloaded, 'skipped': skipped_files}
         else:
             return {'success': False, 'message': f'No matching filings found for {target_date_upper}'}
     
@@ -276,7 +378,7 @@ def download_in_background(companies_list, period, filing_type='both'):
 
 @app.route('/')
 def index():
-    return render_template('index.html', companies=NIFTY50)
+    return render_template('index.html', companies=COMPANIES)
 
 @app.route('/api/download', methods=['POST'])
 def download():
@@ -288,10 +390,10 @@ def download():
     if not symbols or not period:
         return jsonify({'success': False, 'message': 'Please select stocks and period'}), 400
     
-    # Find company details
+    # Find company details from the selected companies list
     companies_to_download = []
     for sym in symbols:
-        company = next((c for c in NIFTY50 if c['symbol'] == sym), None)
+        company = next((c for c in COMPANIES if c['symbol'] == sym), None)
         if company:
             companies_to_download.append(company)
     
