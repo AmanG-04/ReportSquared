@@ -70,6 +70,8 @@ const MONGODB_PASSWORD = process.env.MONGODB_PASSWORD
 const MONGODB_CLUSTER = process.env.MONGODB_CLUSTER;
 const MONGODB_DATABASE = process.env.MONGODB_DATABASE || 'financial_data';
 const MONGODB_COLLECTION = process.env.MONGODB_COLLECTION || 'quarterly_results';
+const MONGODB_DAILY_COLLECTION = process.env.MONGODB_DAILY_COLLECTION || 'daily_prices';
+const DAILY_HISTORY_LIMIT = parseInt(process.env.DAILY_HISTORY_LIMIT || '365', 10);
 const MONGODB_URI_ENV = process.env.MONGODB_URI;
 const MONGODB_ATLAS_URI = process.env.MONGODB_ATLAS_URI;
 const MONGODB_LOCAL_URI = process.env.MONGODB_LOCAL_URI || 'mongodb://localhost:27017';
@@ -118,6 +120,7 @@ function buildLocalUri() {
 
 let db;
 let collection;
+let dailyCollection;
 
 // Connect to MongoDB
 async function connectToMongoDB() {
@@ -145,8 +148,10 @@ async function connectToMongoDB() {
       await client.connect();
       db = client.db(MONGODB_DATABASE);
       collection = db.collection(MONGODB_COLLECTION);
+      dailyCollection = db.collection(MONGODB_DAILY_COLLECTION);
       console.log(`✓ Connected to MongoDB (${candidate.label})`);
       console.log(`✓ Using database: ${MONGODB_DATABASE}, collection: ${MONGODB_COLLECTION}`);
+      console.log(`✓ Daily prices collection: ${MONGODB_DAILY_COLLECTION}`);
 
       if (candidate.label === 'Local' && atlasUri) {
         console.log('ℹ Atlas unavailable, using local MongoDB fallback');
@@ -161,6 +166,49 @@ async function connectToMongoDB() {
 
   console.error('✗ Failed to connect to MongoDB with all configured targets:', lastError);
   process.exit(1);
+}
+
+async function getHistoricalOHLCV(symbol) {
+  if (!dailyCollection) return [];
+
+  const toFinite = (value) => {
+    if (value === null || value === undefined) return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  };
+
+  const docs = await dailyCollection
+    .find(
+      { symbol: symbol.toUpperCase() },
+      {
+        projection: {
+          _id: 0,
+          timestamp: 1,
+          open: 1,
+          high: 1,
+          low: 1,
+          close: 1,
+          adjClose: 1,
+          volume: 1,
+        },
+      }
+    )
+    .sort({ timestamp: -1 })
+    .limit(DAILY_HISTORY_LIMIT)
+    .toArray();
+
+  return docs
+    .reverse()
+    .map((d) => ({
+      timestamp: toFinite(d.timestamp),
+      date: d.timestamp ? new Date(d.timestamp * 1000).toISOString().slice(0, 10) : '',
+      open: toFinite(d.open),
+      high: toFinite(d.high),
+      low: toFinite(d.low),
+      close: toFinite(d.close),
+      adjClose: toFinite(d.adjClose),
+      volume: toFinite(d.volume),
+    }));
 }
 
 // Helper function to transform MongoDB data to frontend format
@@ -315,7 +363,8 @@ app.get('/api/stocks', async (req, res) => {
 app.get('/api/stocks/:symbol', async (req, res) => {
   try {
     const { symbol } = req.params;
-    const doc = await collection.findOne({ StockSymbol: symbol.toUpperCase() });
+    const normalizedSymbol = symbol.toUpperCase();
+    const doc = await collection.findOne({ StockSymbol: normalizedSymbol });
     
     if (!doc) {
       return res.status(404).json({ error: 'Stock not found' });
@@ -324,10 +373,13 @@ app.get('/api/stocks/:symbol', async (req, res) => {
     const stockData = transformStockData(doc);
     
     // Fetch live price data
-    const priceData = await getStockPrice(symbol.toUpperCase());
+    const priceData = await getStockPrice(normalizedSymbol);
     stockData.currentPrice = priceData.currentPrice;
     stockData.priceChange = priceData.priceChange;
     stockData.priceChangePercent = priceData.priceChangePercent;
+
+    // Add daily market history for OHLCV chart on stock page.
+    stockData.historicalOHLCV = await getHistoricalOHLCV(normalizedSymbol);
     
     res.json(stockData);
   } catch (error) {

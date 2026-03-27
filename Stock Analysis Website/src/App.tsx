@@ -43,8 +43,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen relative" style={{ backgroundColor: "#000000" }}>
-      <DynamicBackground />
-      <DottedSurface className="opacity-30" />
+      <DynamicBackground lite={!!selectedStock} />
+      {!selectedStock && <DottedSurface className="opacity-30" />}
       <div className="relative z-10">
         {!selectedStock ? (
           <HomePage onSelectStock={handleSelectStock} />

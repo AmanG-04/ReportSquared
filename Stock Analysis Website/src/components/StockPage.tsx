@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { motion } from "motion/react";
 import { ArrowLeft, TrendingUp, TrendingDown } from "lucide-react";
-import { LineChart, Line, ResponsiveContainer, Tooltip, AreaChart, Area } from "recharts";
-import { StockData } from "../data/mockStocks";
+import { LineChart, Line, Tooltip, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
+import { StockData } from "../services/api";
 
 interface StockPageProps {
   stock: StockData;
@@ -11,6 +11,36 @@ interface StockPageProps {
 
 export function StockPage({ stock, onBack }: StockPageProps) {
   const isPositive = stock.priceChange >= 0;
+  const normalizedDailyHistory = (stock.historicalOHLCV || [])
+    .map((point) => {
+      const toFinite = (value: number | null | undefined) => {
+        if (value === null || value === undefined) return null;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+      };
+
+      return {
+        ...point,
+        open: toFinite(point.open),
+        high: toFinite(point.high),
+        low: toFinite(point.low),
+        close: toFinite(point.close),
+        adjClose: toFinite(point.adjClose),
+        volume: toFinite(point.volume),
+        price: toFinite(point.close) ?? toFinite(point.adjClose) ?? toFinite(point.open),
+      };
+    })
+    .filter((point) => point.price !== null);
+
+  const chartDailyHistory = normalizedDailyHistory.slice(-180);
+
+  const hasDailyHistory = chartDailyHistory.length > 0;
+  const surfaceStyle = {
+    background: "linear-gradient(180deg, rgba(95,104,115,0.92) 0%, rgba(79,87,98,0.92) 100%)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    boxShadow: "0 18px 50px rgba(0,0,0,0.35)",
+    backdropFilter: "blur(6px)",
+  } as const;
 
   return (
     <div className="min-h-screen px-4 py-8">
@@ -31,11 +61,12 @@ export function StockPage({ stock, onBack }: StockPageProps) {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="mb-8"
+          className="mb-8 rounded-3xl p-6"
+          style={surfaceStyle}
         >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <h1 className="text-5xl">{stock.symbol}</h1>
+              <h1 className="text-5xl tracking-tight">{stock.symbol}</h1>
               {isPositive ? (
                 <TrendingUp className="w-8 h-8" style={{ color: "#4ADE80" }} />
               ) : (
@@ -65,35 +96,82 @@ export function StockPage({ stock, onBack }: StockPageProps) {
           </p>
         </motion.div>
 
+        {/* Daily OHLCV History */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.08 }}
+          className="mb-6 rounded-3xl p-6"
+          style={surfaceStyle}
+        >
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-2xl">Daily Price History (OHLCV)</h3>
+            {hasDailyHistory && (
+              <p className="text-sm opacity-70" style={{ color: "#B8BCC1" }}>
+                {chartDailyHistory.length} trading days
+              </p>
+            )}
+          </div>
+
+          {!hasDailyHistory ? (
+            <p className="text-sm opacity-70" style={{ color: "#B8BCC1" }}>
+              No daily market history found for this symbol.
+            </p>
+          ) : (
+            <>
+              <div className="mb-6">
+                <SimplePriceChart data={chartDailyHistory} />
+              </div>
+
+              <div>
+                <SimpleVolumeChart data={chartDailyHistory} />
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2 text-xs" style={{ color: "#D9DDE1" }}>
+                <span className="px-3 py-1.5 rounded-full" style={{ backgroundColor: "rgba(245,158,11,0.16)", border: "1px solid rgba(245,158,11,0.35)" }}>Open</span>
+                <span className="px-3 py-1.5 rounded-full" style={{ backgroundColor: "rgba(74,222,128,0.15)", border: "1px solid rgba(74,222,128,0.35)" }}>High</span>
+                <span className="px-3 py-1.5 rounded-full" style={{ backgroundColor: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.35)" }}>Low</span>
+                <span className="px-3 py-1.5 rounded-full" style={{ backgroundColor: "rgba(62,142,222,0.16)", border: "1px solid rgba(62,142,222,0.35)" }}>Close</span>
+                <span className="px-3 py-1.5 rounded-full" style={{ backgroundColor: "rgba(124,155,193,0.18)", border: "1px solid rgba(124,155,193,0.35)" }}>Volume</span>
+              </div>
+            </>
+          )}
+        </motion.div>
+
         {/* Key Metrics Summary Cards */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.1 }}
-          className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"
+          className="mb-6"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gap: "1rem",
+          }}
         >
           {stock.ebitdaMargin !== undefined && (
-            <div className="rounded-2xl p-4" style={{ backgroundColor: "#5A6169" }}>
-              <p className="text-sm opacity-60 mb-1">EBITDA Margin</p>
-              <p className="text-2xl font-bold">{stock.ebitdaMargin?.toFixed(2)}%</p>
+            <div className="rounded-2xl p-4 overflow-hidden text-center" style={surfaceStyle}>
+              <p className="text-xs uppercase tracking-wide opacity-70 mb-1 truncate">EBITDA Margin</p>
+              <p className="text-[2rem] leading-none font-bold truncate">{stock.ebitdaMargin?.toFixed(2)}%</p>
             </div>
           )}
           {stock.netProfitMargin !== undefined && (
-            <div className="rounded-2xl p-4" style={{ backgroundColor: "#5A6169" }}>
-              <p className="text-sm opacity-60 mb-1">Net Profit Margin</p>
-              <p className="text-2xl font-bold">{stock.netProfitMargin?.toFixed(2)}%</p>
+            <div className="rounded-2xl p-4 overflow-hidden text-center" style={surfaceStyle}>
+              <p className="text-xs uppercase tracking-wide opacity-70 mb-1 truncate">Net Profit Margin</p>
+              <p className="text-[2rem] leading-none font-bold truncate">{stock.netProfitMargin?.toFixed(2)}%</p>
             </div>
           )}
           {stock.eps?.current !== undefined && (
-            <div className="rounded-2xl p-4" style={{ backgroundColor: "#5A6169" }}>
-              <p className="text-sm opacity-60 mb-1">EPS (Current)</p>
-              <p className="text-2xl font-bold">Rs. {stock.eps.current?.toFixed(2)}</p>
+            <div className="rounded-2xl p-4 overflow-hidden text-center" style={surfaceStyle}>
+              <p className="text-xs uppercase tracking-wide opacity-70 mb-1 truncate">EPS (Current)</p>
+              <p className="text-[2rem] leading-none font-bold truncate">Rs. {stock.eps.current?.toFixed(2)}</p>
             </div>
           )}
           {stock.cashFlow?.current !== undefined && (
-            <div className="rounded-2xl p-4" style={{ backgroundColor: "#5A6169" }}>
-              <p className="text-sm opacity-60 mb-1">Cash Flow (Cr)</p>
-              <p className="text-2xl font-bold">{(stock.cashFlow.current / 100).toFixed(0)}</p>
+            <div className="rounded-2xl p-4 overflow-hidden text-center" style={surfaceStyle}>
+              <p className="text-xs uppercase tracking-wide opacity-70 mb-1 truncate">Cash Flow (Cr)</p>
+              <p className="text-[2rem] leading-none font-bold truncate">{(stock.cashFlow.current / 100).toFixed(0)}</p>
             </div>
           )}
         </motion.div>
@@ -122,7 +200,7 @@ export function StockPage({ stock, onBack }: StockPageProps) {
             color="#10B981"
           />
           {stock.eps?.qoqChange !== undefined && stock.eps?.yoyChange !== undefined && (
-            <div className="rounded-3xl p-6" style={{ backgroundColor: "#5A6169", boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
+            <div className="rounded-3xl p-6" style={surfaceStyle}>
               <h3 className="text-2xl mb-4">EPS Changes</h3>
               <div className="space-y-3">
                 <div>
@@ -157,7 +235,7 @@ export function StockPage({ stock, onBack }: StockPageProps) {
             className="grid grid-cols-1 md:grid-cols-2 gap-6"
           >
             {stock.cashFlow?.current !== undefined && (
-              <div className="rounded-3xl p-6" style={{ backgroundColor: "#5A6169", boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
+              <div className="rounded-3xl p-6" style={surfaceStyle}>
                 <h3 className="text-2xl mb-4">Cash Flow from Operations</h3>
                 <p className="text-4xl font-bold mb-2">Rs. {(stock.cashFlow.current / 100).toFixed(0)} Cr</p>
                 {stock.cashFlow.yoyChange !== undefined && stock.cashFlow.yoyChange !== null && (
@@ -168,7 +246,7 @@ export function StockPage({ stock, onBack }: StockPageProps) {
               </div>
             )}
             {stock.borrowings?.current !== undefined && (
-              <div className="rounded-3xl p-6" style={{ backgroundColor: "#5A6169", boxShadow: "0 10px 40px rgba(0,0,0,0.3)" }}>
+              <div className="rounded-3xl p-6" style={surfaceStyle}>
                 <h3 className="text-2xl mb-4">Total Borrowings</h3>
                 <p className="text-4xl font-bold mb-2">Rs. {(stock.borrowings.current / 100).toFixed(0)} Cr</p>
                 {stock.borrowings.yoyChange !== undefined && stock.borrowings.yoyChange !== null && (
@@ -180,6 +258,7 @@ export function StockPage({ stock, onBack }: StockPageProps) {
             )}
           </motion.div>
         )}
+
       </div>
     </div>
   );
@@ -191,6 +270,96 @@ interface MetricCardProps {
   yoyData: Array<{ year: string; value: number }>;
   delay: number;
   color: string;
+}
+
+interface DailyPoint {
+  date: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  price: number | null;
+  volume: number | null;
+}
+
+function SimplePriceChart({ data }: { data: DailyPoint[] }) {
+  const width = 1100;
+  const height = 320;
+  const padLeft = 44;
+  const padRight = 16;
+  const padTop = 16;
+  const padBottom = 28;
+
+  const values = data.flatMap((d) => [d.open, d.high, d.low, d.price]).filter((v): v is number => typeof v === "number");
+  if (values.length === 0) return null;
+
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  if (max === min) {
+    max += 1;
+    min -= 1;
+  }
+
+  const xStep = (width - padLeft - padRight) / Math.max(1, data.length - 1);
+  const y = (v: number) => padTop + ((max - v) / (max - min)) * (height - padTop - padBottom);
+
+  const toPath = (key: "open" | "high" | "low" | "price") => {
+    let path = "";
+    data.forEach((d, i) => {
+      const val = d[key];
+      if (val === null) return;
+      const cmd = path ? "L" : "M";
+      path += `${cmd}${padLeft + i * xStep},${y(val)} `;
+    });
+    return path.trim();
+  };
+
+  const openPath = toPath("open");
+  const highPath = toPath("high");
+  const lowPath = toPath("low");
+  const closePath = toPath("price");
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: "block" }}>
+        <rect x={0} y={0} width={width} height={height} fill="transparent" />
+        <line x1={padLeft} y1={padTop} x2={padLeft} y2={height - padBottom} stroke="#6A727A" strokeWidth={1} opacity={0.5} />
+        <line x1={padLeft} y1={height - padBottom} x2={width - padRight} y2={height - padBottom} stroke="#6A727A" strokeWidth={1} opacity={0.5} />
+        {openPath && <path d={openPath} fill="none" stroke="#F59E0B" strokeWidth={1.4} />}
+        {highPath && <path d={highPath} fill="none" stroke="#4ADE80" strokeWidth={1.5} />}
+        {lowPath && <path d={lowPath} fill="none" stroke="#F87171" strokeWidth={1.5} />}
+        {closePath && <path d={closePath} fill="none" stroke="#3E8EDE" strokeWidth={2.6} />}
+      </svg>
+    </div>
+  );
+}
+
+function SimpleVolumeChart({ data }: { data: DailyPoint[] }) {
+  const width = 1100;
+  const height = 180;
+  const padLeft = 44;
+  const padRight = 16;
+  const padTop = 10;
+  const padBottom = 22;
+
+  const maxVol = Math.max(...data.map((d) => d.volume ?? 0), 1);
+  const chartWidth = width - padLeft - padRight;
+  const barWidth = Math.max(1, chartWidth / Math.max(1, data.length));
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: "block" }}>
+        <rect x={0} y={0} width={width} height={height} fill="transparent" />
+        <line x1={padLeft} y1={height - padBottom} x2={width - padRight} y2={height - padBottom} stroke="#6A727A" strokeWidth={1} opacity={0.5} />
+        {data.map((d, i) => {
+          const vol = d.volume ?? 0;
+          const barH = (vol / maxVol) * (height - padTop - padBottom);
+          const x = padLeft + i * barWidth;
+          const y = height - padBottom - barH;
+          return <rect key={`${d.date}-${i}`} x={x} y={y} width={Math.max(1, barWidth - 0.7)} height={barH} fill="#7C9BC1" opacity={0.9} />;
+        })}
+      </svg>
+    </div>
+  );
 }
 
 function MetricCard({ title, qoqData, yoyData, delay, color }: MetricCardProps) {
@@ -206,8 +375,9 @@ function MetricCard({ title, qoqData, yoyData, delay, color }: MetricCardProps) 
       transition={{ duration: 0.5, delay }}
       className="rounded-3xl p-6"
       style={{
-        backgroundColor: "#5A6169",
-        boxShadow: "0 10px 40px rgba(0,0,0,0.3)",
+        background: "linear-gradient(180deg, rgba(95,104,115,0.92) 0%, rgba(79,87,98,0.92) 100%)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        boxShadow: "0 18px 50px rgba(0,0,0,0.35)",
       }}
     >
       <h3 className="text-2xl mb-6">{title}</h3>
@@ -273,7 +443,7 @@ function MetricCard({ title, qoqData, yoyData, delay, color }: MetricCardProps) 
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: delay + 0.2 + index * 0.1 }}
             className="rounded-xl p-3 text-center"
-            style={{ backgroundColor: "#2A2E32" }}
+            style={{ backgroundColor: "rgba(28,32,36,0.62)", border: "1px solid rgba(255,255,255,0.08)" }}
           >
             <p className="text-xs opacity-60 mb-1" style={{ color: "#B8BCC1" }}>
               {item[dataKey as keyof typeof item]}

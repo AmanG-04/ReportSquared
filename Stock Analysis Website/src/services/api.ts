@@ -1,5 +1,16 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
+export interface DailyOHLCVPoint {
+  timestamp: number;
+  date: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  adjClose: number | null;
+  volume: number | null;
+}
+
 export interface StockData {
   symbol: string;
   name: string;
@@ -40,6 +51,7 @@ export interface StockData {
     qoqChange: number;
     yoyChange: number;
   };
+  historicalOHLCV?: DailyOHLCVPoint[];
 }
 
 export interface StockSymbol {

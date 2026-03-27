@@ -1,8 +1,39 @@
 import { motion } from "motion/react";
 
-export function DynamicBackground() {
+interface DynamicBackgroundProps {
+  lite?: boolean;
+}
+
+export function DynamicBackground({ lite = false }: DynamicBackgroundProps) {
+  if (lite) {
+    return (
+      <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10" style={{ filter: "brightness(0.3)" }}>
+        <div
+          className="absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage: `
+              linear-gradient(#3E8EDE 1px, transparent 1px),
+              linear-gradient(90deg, #3E8EDE 1px, transparent 1px)
+            `,
+            backgroundSize: "56px 56px",
+          }}
+        />
+        <div
+          className="absolute rounded-full blur-3xl opacity-15"
+          style={{
+            width: "520px",
+            height: "520px",
+            background: "radial-gradient(circle, #3E8EDE 0%, transparent 70%)",
+            top: "-12%",
+            right: "-8%",
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
+    <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10" style={{ filter: "brightness(0.3)" }}>
       {/* Animated gradient blobs */}
       <motion.div
         className="absolute rounded-full blur-3xl opacity-20"

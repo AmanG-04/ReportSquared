@@ -127,8 +127,10 @@ export function DottedSurface({ className, children, ...props }: DottedSurfacePr
     };
   }, [theme]);
 
+  const { style, ...restProps } = props;
+
   return (
-    <div ref={containerRef} className={cn('pointer-events-none fixed inset-0 z-0 opacity-30 mix-blend-screen', className)} {...props}>
+    <div ref={containerRef} className={cn('pointer-events-none fixed inset-0 z-0 opacity-30 mix-blend-screen', className)} {...restProps} style={{ ...(style || {}), filter: 'brightness(0.3)' }}>
       {children}
     </div>
   );
